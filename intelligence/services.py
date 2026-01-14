@@ -2,16 +2,20 @@
 Intelligence Services - Core decision-making logic for LifeLink.
 
 This module contains the "brain" of the emergency response system.
-All logic is rule-based (no ML) for MVP/hackathon simplicity.
+Supports both rule-based (fast) and LLM (intelligent) analysis.
 
 Functions:
 - calculate_urgency: Determines urgency score (0-100)
 - classify_emergency: Categorizes emergency type
-- analyze_sos: Main analysis function combining above
+- analyze_sos: Main analysis function (rule-based)
+- analyze_sos_hybrid: Enhanced analysis with LLM + fallback
 """
 
 from datetime import datetime
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # Emergency keywords for classification
@@ -53,45 +57,33 @@ def calculate_urgency(sos_data: dict) -> dict:
             - description: str (optional)
             - created_at: datetime or str
             - latitude/longitude: float
-            - is_bystander_report: bool (NEW)
-            - victim_condition: str (NEW)
-            - estimated_victims: int (NEW)
-            - card_urgency_boost: int (NEW - from selected card)
+            - is_bystander_report: bool
+            - victim_condition: str
+            - estimated_victims: int
+            - card_urgency_boost: int (from selected card)
     
     Returns:
         Dictionary with:
             - urgency_score: int (0-100)
             - severity_level: str (critical/high/moderate/low)
             - urgency_factors: list of contributing factors
-    
-    Scoring Logic:
-        Base score: 50
-        +card_urgency_boost (from selected emergency card, 0-50)
-        +25 for bystander report (victim cannot self-report)
-        +15 for unconscious victim
-        +10 for multiple victims
-        +30 for silent mode (indicates danger)
-        +20 for late night hours (10pm - 6am)
-        +10-30 for critical keywords
-        -10 for vague/no description
     """
     
     base_score = 50
     factors = []
     
-    # ========== NEW: Emergency Card Boost ==========
+    # Emergency Card Boost
     card_boost = sos_data.get('card_urgency_boost', 0)
     if card_boost > 0:
         base_score += card_boost
         factors.append(f"Emergency card selected (+{card_boost})")
     
-    # ========== NEW: Bystander Report Boost ==========
-    # Bystander reports are critical because the victim cannot report themselves
+    # Bystander Report Boost
     if sos_data.get('is_bystander_report', False):
         base_score += 25
         factors.append("Bystander report - victim unable to self-report (+25)")
     
-    # ========== NEW: Victim Condition ==========
+    # Victim Condition
     victim_condition = sos_data.get('victim_condition', 'unknown')
     if victim_condition == 'unconscious':
         base_score += 15
@@ -100,19 +92,19 @@ def calculate_urgency(sos_data: dict) -> dict:
         base_score += 10
         factors.append("Victim is semi-conscious (+10)")
     
-    # ========== NEW: Multiple Victims ==========
+    # Multiple Victims
     estimated_victims = sos_data.get('estimated_victims', 1)
     if estimated_victims > 1:
-        multi_victim_boost = min(estimated_victims * 5, 20)  # Cap at +20
+        multi_victim_boost = min(estimated_victims * 5, 20)
         base_score += multi_victim_boost
         factors.append(f"Multiple victims ({estimated_victims}) (+{multi_victim_boost})")
     
-    # Factor: Silent mode indicates serious danger
+    # Silent mode indicates serious danger
     if sos_data.get('silent_mode', False):
         base_score += 30
         factors.append("Silent mode activated (+30)")
     
-    # Factor: Time of day - late night is higher risk
+    # Time of day - late night is higher risk
     created_at = sos_data.get('created_at')
     if created_at:
         if isinstance(created_at, str):
@@ -122,14 +114,14 @@ def calculate_urgency(sos_data: dict) -> dict:
                 created_at = datetime.now()
         
         hour = created_at.hour
-        if 22 <= hour or hour < 6:  # 10 PM to 6 AM
+        if 22 <= hour or hour < 6:
             base_score += 20
             factors.append(f"Late night hour ({hour}:00) (+20)")
-        elif 6 <= hour < 8 or 18 <= hour < 22:  # Early morning or evening
+        elif 6 <= hour < 8 or 18 <= hour < 22:
             base_score += 10
             factors.append(f"Evening/early morning hour ({hour}:00) (+10)")
     
-    # Factor: Keywords in description
+    # Keywords in description
     description = sos_data.get('description', '') or ''
     description_lower = description.lower()
     
@@ -142,7 +134,7 @@ def calculate_urgency(sos_data: dict) -> dict:
         if keyword in description_lower:
             base_score += 30
             factors.append(f"Critical keyword '{keyword}' (+30)")
-            break  # Only add bonus once
+            break
     else:
         for keyword in high_keywords:
             if keyword in description_lower:
@@ -150,8 +142,7 @@ def calculate_urgency(sos_data: dict) -> dict:
                 factors.append(f"High-priority keyword '{keyword}' (+15)")
                 break
     
-    # Factor: No description might indicate panic/inability to type
-    # But if card is selected, no penalty
+    # No description penalty (unless card selected)
     has_card = sos_data.get('card_urgency_boost', 0) > 0
     if not description and sos_data.get('silent_mode', False):
         base_score += 10
@@ -160,10 +151,10 @@ def calculate_urgency(sos_data: dict) -> dict:
         base_score -= 10
         factors.append("No description provided (-10)")
     
-    # Cap score between 0 and 100
+    # Cap score
     urgency_score = max(0, min(100, base_score))
     
-    # Determine severity level
+    # Severity level
     if urgency_score >= 80:
         severity_level = 'critical'
     elif urgency_score >= 60:
@@ -184,65 +175,41 @@ def classify_emergency(sos_data: dict) -> dict:
     """
     Classify the type of emergency based on description and context.
     
-    Args:
-        sos_data: Dictionary containing:
-            - description: str (optional)
-            - silent_mode: bool
-    
     Returns:
-        Dictionary with:
-            - emergency_type: str (medical/safety/accident/emotional/unknown)
-            - confidence: float (0-1)
-            - matched_keywords: list
-    
-    Classification Logic:
-        - Count keyword matches for each category
-        - Return category with most matches
-        - Silent mode with no description defaults to 'safety'
+        Dictionary with emergency_type, confidence, matched_keywords, reasoning
     """
     
     description = sos_data.get('description', '') or ''
     description_lower = description.lower()
     
-    # Count matches for each category
     category_scores = {}
     category_keywords = {}
     
     for category, keywords in EMERGENCY_KEYWORDS.items():
-        matches = []
-        for keyword in keywords:
-            if keyword in description_lower:
-                matches.append(keyword)
+        matches = [kw for kw in keywords if kw in description_lower]
         category_scores[category] = len(matches)
         category_keywords[category] = matches
     
-    # Find best matching category
     best_category = max(category_scores, key=category_scores.get)
     best_score = category_scores[best_category]
     
-    # Handle edge cases
     if best_score == 0:
-        # No keyword matches
         if sos_data.get('silent_mode', False):
-            # Silent mode with no context suggests safety issue
             return {
                 'emergency_type': 'safety',
                 'confidence': 0.6,
                 'matched_keywords': [],
-                'reasoning': 'Silent mode activated without description - assuming safety threat'
+                'reasoning': 'Silent mode activated - assuming safety threat'
             }
-        else:
-            return {
-                'emergency_type': 'unknown',
-                'confidence': 0.0,
-                'matched_keywords': [],
-                'reasoning': 'No recognizable keywords in description'
-            }
+        return {
+            'emergency_type': 'unknown',
+            'confidence': 0.0,
+            'matched_keywords': [],
+            'reasoning': 'No recognizable keywords'
+        }
     
-    # Calculate confidence based on keyword matches
     total_keywords = sum(category_scores.values())
-    confidence = best_score / max(total_keywords, 1)
-    confidence = round(min(confidence * 1.5, 1.0), 2)  # Boost and cap at 1.0
+    confidence = round(min((best_score / max(total_keywords, 1)) * 1.5, 1.0), 2)
     
     return {
         'emergency_type': best_category,
@@ -254,22 +221,14 @@ def classify_emergency(sos_data: dict) -> dict:
 
 def analyze_sos(sos_data: dict) -> dict:
     """
-    Main analysis function - combines urgency and classification.
+    Main rule-based analysis function.
     
-    This is the primary entry point for the intelligence system.
-    
-    Args:
-        sos_data: Dictionary containing SOS request data
-    
-    Returns:
-        Complete analysis with urgency score, classification, and recommendations
+    Returns complete analysis with urgency, classification, skills, escalation flag.
     """
     
-    # Get urgency and classification
     urgency = calculate_urgency(sos_data)
     classification = classify_emergency(sos_data)
     
-    # Add recommended skills based on emergency type
     skill_recommendations = {
         'medical': ['first_aid', 'cpr', 'emt', 'nurse', 'doctor'],
         'safety': ['security', 'self_defense', 'crisis_negotiation'],
@@ -283,7 +242,6 @@ def analyze_sos(sos_data: dict) -> dict:
         ['general']
     )
     
-    # Determine if authority escalation is needed
     needs_authority = (
         urgency['severity_level'] == 'critical' or
         classification['emergency_type'] in ['safety', 'accident'] or
@@ -300,5 +258,93 @@ def analyze_sos(sos_data: dict) -> dict:
         'classification_reasoning': classification['reasoning'],
         'recommended_skills': recommended_skills,
         'needs_authority_escalation': needs_authority,
-        'analysis_timestamp': datetime.now().isoformat()
+        'analysis_timestamp': datetime.now().isoformat(),
+        'analysis_method': 'rule_based'
     }
+
+
+def analyze_sos_hybrid(sos_data: dict, use_llm: bool = True) -> dict:
+    """
+    Hybrid analysis - LLM first with rule-based fallback.
+    
+    Token-optimized approach:
+    1. Skip LLM if description empty or card selected
+    2. Try Groq LLM analysis (fast, accurate)
+    3. Fallback to rule-based on any failure
+    4. Merge LLM insights with rule-based urgency
+    
+    Args:
+        sos_data: SOS request data
+        use_llm: Whether to attempt LLM analysis (default True)
+    
+    Returns:
+        Enhanced analysis with panic_level, emotional_state if LLM used
+    """
+    
+    # Always get rule-based analysis as baseline
+    rule_result = analyze_sos(sos_data)
+    
+    # Check if we should skip LLM (token optimization)
+    description = sos_data.get('description', '') or ''
+    has_card = sos_data.get('card_urgency_boost', 0) > 0
+    
+    if not use_llm:
+        logger.debug("LLM disabled by parameter")
+        return rule_result
+    
+    if not description or len(description.strip()) < 5:
+        logger.debug("Skipping LLM - no/short description")
+        return rule_result
+    
+    if has_card:
+        logger.debug("Skipping LLM - emergency card selected")
+        return rule_result
+    
+    # Try LLM analysis
+    try:
+        from .groq_service import analyze_with_llm
+        
+        context = {
+            'silent_mode': sos_data.get('silent_mode', False),
+            'is_bystander': sos_data.get('is_bystander_report', False)
+        }
+        
+        llm_result = analyze_with_llm(description, context, has_card)
+        
+        if llm_result:
+            # Merge LLM insights with rule-based urgency
+            merged = rule_result.copy()
+            
+            # Use LLM classification if confident
+            if llm_result.get('emergency_type') != 'unknown':
+                merged['emergency_type'] = llm_result['emergency_type']
+                merged['classification_reasoning'] = llm_result.get('llm_reasoning', '')
+            
+            # Add LLM-specific fields
+            merged['panic_level'] = llm_result.get('panic_level', 5)
+            merged['emotional_state'] = llm_result.get('emotional_state', 'unknown')
+            merged['llm_reasoning'] = llm_result.get('llm_reasoning', '')
+            merged['analysis_method'] = 'hybrid'
+            
+            # Boost urgency if LLM detects high panic
+            panic_level = llm_result.get('panic_level', 5)
+            if panic_level >= 8:
+                merged['urgency_score'] = min(100, merged['urgency_score'] + 15)
+                merged['urgency_factors'].append(f"High panic detected by AI (+15)")
+                if merged['urgency_score'] >= 80:
+                    merged['severity_level'] = 'critical'
+            
+            # Use LLM skills if provided
+            if llm_result.get('recommended_skills'):
+                merged['recommended_skills'] = llm_result['recommended_skills']
+            
+            logger.info("Hybrid analysis complete with LLM enhancement")
+            return merged
+            
+    except ImportError:
+        logger.warning("Groq service not available")
+    except Exception as e:
+        logger.warning(f"LLM analysis failed, using rule-based: {e}")
+    
+    # Fallback to rule-based
+    return rule_result

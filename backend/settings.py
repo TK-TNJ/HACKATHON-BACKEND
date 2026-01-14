@@ -32,6 +32,12 @@ DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 
 ALLOWED_HOSTS = ['*']
 
+# Groq LLM Configuration (Token-Optimized)
+GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
+GROQ_MODEL = 'llama-3.3-70b-versatile'
+GROQ_MAX_TOKENS = 200
+LLM_ENABLED = bool(GROQ_API_KEY)
+
 
 # Application definition
 
