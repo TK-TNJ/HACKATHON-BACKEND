@@ -2,6 +2,7 @@
 SOS Views - API endpoints for emergency SOS requests.
 
 Core endpoints for creating, tracking, and managing SOS requests.
+Includes EmergencyCard listing for quick-tap selection.
 """
 
 from rest_framework import viewsets, status
@@ -15,7 +16,37 @@ from .serializers import (
     SOSCreateSerializer,
     SOSStatusUpdateSerializer,
     SOSListSerializer,
+    EmergencyCardSerializer,
 )
+
+
+class EmergencyCardViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for listing emergency cards (read-only).
+    
+    Endpoints:
+    - GET /sos/cards/ - List all active emergency cards
+    - GET /sos/cards/{id}/ - Get specific card details
+    
+    Cards are pre-defined by admin and displayed on app home screen
+    for quick one-tap emergency selection.
+    """
+    
+    queryset = EmergencyCard.objects.filter(is_active=True)
+    serializer_class = EmergencyCardSerializer
+    
+    def list(self, request, *args, **kwargs):
+        """
+        Return list of active emergency cards for display.
+        Ordered by display_order for consistent UI presentation.
+        """
+        cards = self.get_queryset()
+        serializer = self.get_serializer(cards, many=True)
+        
+        return Response({
+            "count": len(serializer.data),
+            "cards": serializer.data
+        })
 
 
 class SOSRequestViewSet(viewsets.ModelViewSet):
@@ -24,21 +55,20 @@ class SOSRequestViewSet(viewsets.ModelViewSet):
     
     Endpoints:
     - GET /sos/ - List all SOS requests
-    - POST /sos/ - Create new SOS request
+    - POST /sos/ - Create new SOS request (with card selection)
     - GET /sos/{id}/ - Get SOS details
     - PATCH /sos/{id}/ - Update SOS (general)
     - PATCH /sos/{id}/status/ - Update status only
     - POST /sos/{id}/resolve/ - Mark as resolved
     - GET /sos/active/ - List active (unresolved) SOS
     - GET /sos/by-user/{user_id}/ - Get SOS by user
+    - GET /sos/bystander-reports/ - List bystander reports only
     """
     
-    queryset = SOSRequest.objects.select_related('user').all()
+    queryset = SOSRequest.objects.select_related('user', 'selected_card').all()
     
     def get_serializer_class(self):
-        """
-        Use different serializers based on action.
-        """
+        """Use different serializers based on action."""
         if self.action == 'create':
             return SOSCreateSerializer
         elif self.action == 'list':
@@ -51,7 +81,11 @@ class SOSRequestViewSet(viewsets.ModelViewSet):
         """
         Create a new SOS request.
         
-        This is the primary entry point for emergencies.
+        Supports:
+        - Quick card selection (selected_card field)
+        - Additional details text
+        - Bystander reporting (is_bystander_report field)
+        
         The intelligence app will analyze this after creation.
         """
         serializer = self.get_serializer(data=request.data)
@@ -97,9 +131,7 @@ class SOSRequestViewSet(viewsets.ModelViewSet):
     def update_status(self, request, pk=None):
         """
         Update only the status of an SOS request.
-        
-        Used by internal systems and responders to update
-        the lifecycle state of an SOS.
+        Used by internal systems and responders.
         """
         sos = self.get_object()
         serializer = SOSStatusUpdateSerializer(sos, data=request.data, partial=True)
@@ -117,7 +149,6 @@ class SOSRequestViewSet(viewsets.ModelViewSet):
     def resolve(self, request, pk=None):
         """
         Mark an SOS as resolved.
-        
         Sets status to 'resolved' and records resolution timestamp.
         """
         sos = self.get_object()
@@ -133,21 +164,40 @@ class SOSRequestViewSet(viewsets.ModelViewSet):
     def list_active(self, request):
         """
         Get all active (unresolved) SOS requests.
-        
-        Used by responders and coordinators to see current emergencies.
+        Used by responders and coordinators.
         """
         active_statuses = ['created', 'analyzing', 'assigned', 'in_progress']
-        active_sos = SOSRequest.objects.filter(status__in=active_statuses)
+        active_sos = SOSRequest.objects.filter(
+            status__in=active_statuses
+        ).select_related('user', 'selected_card')
         serializer = SOSListSerializer(active_sos, many=True)
         return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path='bystander-reports')
+    def list_bystander_reports(self, request):
+        """
+        Get all bystander reports (someone reporting for another person).
+        These are typically higher priority.
+        """
+        bystander_sos = SOSRequest.objects.filter(
+            is_bystander_report=True
+        ).select_related('user', 'selected_card')
+        serializer = SOSListSerializer(bystander_sos, many=True)
+        return Response({
+            "count": len(serializer.data),
+            "note": "Bystander reports typically have higher urgency",
+            "results": serializer.data
+        })
     
     @action(detail=False, methods=['get'], url_path='by-user/(?P<user_id>[^/.]+)')
     def by_user(self, request, user_id=None):
         """
         Get all SOS requests for a specific user.
-        
         Used for user history and postcare tracking.
         """
-        user_sos = SOSRequest.objects.filter(user_id=user_id)
+        user_sos = SOSRequest.objects.filter(
+            user_id=user_id
+        ).select_related('selected_card')
         serializer = SOSListSerializer(user_sos, many=True)
         return Response(serializer.data)
+
