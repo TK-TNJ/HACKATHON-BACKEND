@@ -8,6 +8,8 @@ These endpoints manage profile data only.
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.views import APIView
+from django.contrib.auth.hashers import check_password
 
 from .models import UserProfile, ResponderProfile
 from .serializers import (
@@ -143,3 +145,35 @@ class ResponderProfileViewSet(viewsets.ModelViewSet):
         )
         serializer = self.get_serializer(responders, many=True)
         return Response(serializer.data)
+
+
+class LoginView(APIView):
+    """
+    Custom Login View for Email/Password auth.
+    """
+    def post(self, request):
+        email = request.data.get('email')
+        password = request.data.get('password')
+
+        if not email or not password:
+            return Response({'error': 'Email and password are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = UserProfile.objects.get(email=email)
+        except UserProfile.DoesNotExist:
+            return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        if user.password and check_password(password, user.password):
+            # Success
+             return Response({
+                'message': 'Login successful',
+                'user': {
+                    'id': user.id,
+                    'supabase_user_id': user.supabase_user_id,
+                    'email': user.email,
+                    'role': user.role,
+                    'trust_score': user.trust_score
+                }
+            })
+        else:
+            return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
