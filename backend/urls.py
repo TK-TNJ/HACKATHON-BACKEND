@@ -44,4 +44,5 @@ urlpatterns = [
     path('api/v1/intelligence/', include('intelligence.urls')),
     path('api/v1/response/', include('response.urls')),
     path('api/v1/postcare/', include('postcare.urls')),
+    path('api/v1/notifications/', include('notifications.urls')),
 ]
