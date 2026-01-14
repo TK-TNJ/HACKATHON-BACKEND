@@ -9,7 +9,8 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from .models import SOSRequest, EmergencyCard
+from .models import SOSRequest
+from accounts.models import UserProfile
 from .serializers import (
     SOSRequestSerializer,
     SOSCreateSerializer,
@@ -89,7 +90,35 @@ class SOSRequestViewSet(viewsets.ModelViewSet):
         """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        sos = serializer.save()
+        
+        # Infer user from request or body (for custom auth without token)
+        try:
+            supabase_id = None
+            if hasattr(request.user, 'username') and request.user.username:
+                 supabase_id = request.user.username
+            elif request.user and str(request.user) != 'AnonymousUser':
+                 supabase_id = str(request.user)
+            
+            # Fallback: Check request data for custom auth clients
+            if not supabase_id or supabase_id == 'AnonymousUser':
+                 supabase_id = request.data.get('supabase_user_id')
+
+            if not supabase_id:
+                  return Response(
+                     {"error": "User identification required (supabase_user_id)"},
+                     status=status.HTTP_400_BAD_REQUEST
+                 )
+
+            user_profile = UserProfile.objects.get(supabase_user_id=supabase_id)
+            sos = serializer.save(user=user_profile)
+        except UserProfile.DoesNotExist:
+             # Fallback or error if profile doesn't exist (should verify profile creation on signup)
+             # For debug:
+             print(f"SOS Create Error: UserProfile not found for {request.user}")
+             return Response(
+                 {"error": f"UserProfile not found for current user. Please ensure you are registered."},
+                 status=status.HTTP_400_BAD_REQUEST
+             )
         
         # Return full serializer for response
         response_serializer = SOSRequestSerializer(sos)

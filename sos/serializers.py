@@ -114,22 +114,7 @@ class SOSCreateSerializer(serializers.ModelSerializer):
             'status',
             'created_at',
         ]
-        read_only_fields = ['id', 'status', 'created_at']
-    
-    def validate(self, data):
-        """
-        Ensure at least some emergency context is provided.
-        """
-        has_card = data.get('selected_card') is not None
-        has_details = bool(data.get('additional_details'))
-        has_description = bool(data.get('description'))
-        
-        if not (has_card or has_details or has_description):
-            raise serializers.ValidationError(
-                "Please select an emergency card or provide a description."
-            )
-        
-        return data
+        read_only_fields = ['id', 'status', 'created_at', 'user']
 
 
 class SOSStatusUpdateSerializer(serializers.ModelSerializer):

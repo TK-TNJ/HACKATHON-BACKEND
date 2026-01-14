@@ -41,8 +41,19 @@ class UserProfileCreateSerializer(serializers.ModelSerializer):
             'role',
             'trust_score',
             'created_at',
+            'email',
+            'password',
         ]
         read_only_fields = ['id', 'created_at']
+
+    def create(self, validated_data):
+        password = validated_data.pop('password', None)
+        instance = super().create(validated_data)
+        if password:
+            from django.contrib.auth.hashers import make_password
+            instance.password = make_password(password)
+            instance.save()
+        return instance
 
 
 class ResponderProfileSerializer(serializers.ModelSerializer):

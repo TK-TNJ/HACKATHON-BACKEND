@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'intelligence',
     'response',
     'postcare',
+    'notifications',
 ]
 
 MIDDLEWARE = [

@@ -201,7 +201,25 @@ class SOSRequest(models.Model):
         help_text="Optional emergency description or keywords"
     )
     
-    # ========== STATUS & TIMESTAMPS ==========
+    # Estimated number of victims (Added to match legacy DB schema)
+    estimated_victims = models.IntegerField(
+        default=0,
+        help_text="Estimated number of people affected"
+    )
+    
+    # Bystander Report Flag (Added to match legacy DB schema)
+    is_bystander_report = models.BooleanField(
+        default=False,
+        help_text="True if this is reported by a bystander, not the victim"
+    )
+
+    # Condition of the victim (Added to match legacy DB schema)
+    victim_condition = models.TextField(
+        default="Unknown",
+        help_text="Description of the victim's condition"
+    )
+
+    # Current status of the SOS
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,

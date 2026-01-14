@@ -43,6 +43,20 @@ class UserProfile(models.Model):
         help_text="Trust score from 0-100, affects SOS prioritization"
     )
     
+    # Custom Auth Fields (Requested by User)
+    email = models.EmailField(
+        unique=True,
+        null=True, # Allow null for existing users or migration
+        blank=True,
+        help_text="User email for custom login"
+    )
+    password = models.CharField(
+        max_length=128,
+        null=True,
+        blank=True,
+        help_text="Hashed password for custom login"
+    )
+    
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
