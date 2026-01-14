@@ -9,6 +9,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from .models import EmergencyCard
 from .models import SOSRequest
 from accounts.models import UserProfile
 from .serializers import (
