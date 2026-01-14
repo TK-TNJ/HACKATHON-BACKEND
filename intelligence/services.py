@@ -53,6 +53,10 @@ def calculate_urgency(sos_data: dict) -> dict:
             - description: str (optional)
             - created_at: datetime or str
             - latitude/longitude: float
+            - is_bystander_report: bool (NEW)
+            - victim_condition: str (NEW)
+            - estimated_victims: int (NEW)
+            - card_urgency_boost: int (NEW - from selected card)
     
     Returns:
         Dictionary with:
@@ -62,6 +66,10 @@ def calculate_urgency(sos_data: dict) -> dict:
     
     Scoring Logic:
         Base score: 50
+        +card_urgency_boost (from selected emergency card, 0-50)
+        +25 for bystander report (victim cannot self-report)
+        +15 for unconscious victim
+        +10 for multiple victims
         +30 for silent mode (indicates danger)
         +20 for late night hours (10pm - 6am)
         +10-30 for critical keywords
@@ -71,12 +79,40 @@ def calculate_urgency(sos_data: dict) -> dict:
     base_score = 50
     factors = []
     
-    # Factor 1: Silent mode indicates serious danger
+    # ========== NEW: Emergency Card Boost ==========
+    card_boost = sos_data.get('card_urgency_boost', 0)
+    if card_boost > 0:
+        base_score += card_boost
+        factors.append(f"Emergency card selected (+{card_boost})")
+    
+    # ========== NEW: Bystander Report Boost ==========
+    # Bystander reports are critical because the victim cannot report themselves
+    if sos_data.get('is_bystander_report', False):
+        base_score += 25
+        factors.append("Bystander report - victim unable to self-report (+25)")
+    
+    # ========== NEW: Victim Condition ==========
+    victim_condition = sos_data.get('victim_condition', 'unknown')
+    if victim_condition == 'unconscious':
+        base_score += 15
+        factors.append("Victim is unconscious/unresponsive (+15)")
+    elif victim_condition == 'semi_conscious':
+        base_score += 10
+        factors.append("Victim is semi-conscious (+10)")
+    
+    # ========== NEW: Multiple Victims ==========
+    estimated_victims = sos_data.get('estimated_victims', 1)
+    if estimated_victims > 1:
+        multi_victim_boost = min(estimated_victims * 5, 20)  # Cap at +20
+        base_score += multi_victim_boost
+        factors.append(f"Multiple victims ({estimated_victims}) (+{multi_victim_boost})")
+    
+    # Factor: Silent mode indicates serious danger
     if sos_data.get('silent_mode', False):
         base_score += 30
         factors.append("Silent mode activated (+30)")
     
-    # Factor 2: Time of day - late night is higher risk
+    # Factor: Time of day - late night is higher risk
     created_at = sos_data.get('created_at')
     if created_at:
         if isinstance(created_at, str):
@@ -93,7 +129,7 @@ def calculate_urgency(sos_data: dict) -> dict:
             base_score += 10
             factors.append(f"Evening/early morning hour ({hour}:00) (+10)")
     
-    # Factor 3: Keywords in description
+    # Factor: Keywords in description
     description = sos_data.get('description', '') or ''
     description_lower = description.lower()
     
@@ -114,11 +150,13 @@ def calculate_urgency(sos_data: dict) -> dict:
                 factors.append(f"High-priority keyword '{keyword}' (+15)")
                 break
     
-    # Factor 4: No description might indicate panic/inability to type
+    # Factor: No description might indicate panic/inability to type
+    # But if card is selected, no penalty
+    has_card = sos_data.get('card_urgency_boost', 0) > 0
     if not description and sos_data.get('silent_mode', False):
         base_score += 10
         factors.append("No description with silent mode (+10)")
-    elif not description:
+    elif not description and not has_card:
         base_score -= 10
         factors.append("No description provided (-10)")
     
