@@ -157,6 +157,7 @@ class SOSListSerializer(serializers.ModelSerializer):
             'latitude',
             'longitude',
             'silent_mode',
+            'description',  # Added requested description field
             'status',
             'created_at',
         ]
