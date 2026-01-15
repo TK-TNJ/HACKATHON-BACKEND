@@ -56,6 +56,13 @@ class UserProfile(models.Model):
         blank=True,
         help_text="Hashed password for custom login"
     )
+
+    # Emergency Contacts
+    emergency_contacts = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of emergency contacts (max 3)"
+    )
     
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)

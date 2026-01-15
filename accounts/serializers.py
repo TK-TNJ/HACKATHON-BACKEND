@@ -21,6 +21,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'supabase_user_id',
             'role',
             'trust_score',
+            'emergency_contacts',
             'created_at',
             'updated_at',
         ]
