@@ -78,6 +78,59 @@ class ResponderProfileViewSet(viewsets.ModelViewSet):
     
     queryset = ResponderProfile.objects.select_related('user').all()
     serializer_class = ResponderProfileSerializer
+
+    def create(self, request, *args, **kwargs):
+        """
+        Create a new Responder Profile.
+        
+        Requires 'supabase_user_id' in request body to link to UserProfile.
+        """
+        supabase_id = request.data.get('supabase_user_id')
+        email = request.data.get('email')
+        password = request.data.get('password')
+
+        if not supabase_id:
+            return Response(
+                {"error": "supabase_user_id is required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        try:
+            # Auto-create UserProfile if it doesn't exist (assuming fresh registration)
+            user_profile, created = UserProfile.objects.get_or_create(
+                supabase_user_id=supabase_id,
+                defaults={'role': 'responder'} 
+            )
+            
+            # Update credentials if provided (Fix for missing data)
+            if email or password:
+                if email:
+                    user_profile.email = email
+                if password:
+                    user_profile.password = make_password(password)
+                user_profile.save()
+                
+            if created:
+                print(f"DEBUG: Created new UserProfile for {supabase_id} during Responder registration")
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to create/fetch user profile: {str(e)}"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        # Check if already exists
+        if ResponderProfile.objects.filter(user=user_profile).exists():
+             return Response(
+                {"error": "Responder profile already exists for this user"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=user_profile)
+        
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
     
     @action(detail=True, methods=['patch'], url_path='availability')
     def update_availability(self, request, pk=None):

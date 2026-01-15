@@ -16,6 +16,8 @@ from .serializers import (
     SOSStatusUpdateSerializer,
     SOSListSerializer,
 )
+from response.services import find_matching_responders, assign_responder
+from accounts.models import ResponderProfile
 
 
 class SOSRequestViewSet(viewsets.ModelViewSet):
@@ -88,6 +90,44 @@ class SOSRequestViewSet(viewsets.ModelViewSet):
         
         # Return full serializer for response
         response_serializer = SOSRequestSerializer(sos)
+        
+        # --- INTELLIGENT DISPATCH LOGIC ---
+        # Automatically find and assign the best responder
+        try:
+            # 1. Find matches (skills based on description/type)
+            # Simple keyword matching for demo
+            required_skills = []
+            desc_lower = sos.description.lower()
+            if 'medical' in desc_lower or 'doctor' in desc_lower or 'health' in desc_lower:
+                required_skills = ['First Aid', 'CPR', 'Doctor', 'Nurse', 'EMT']
+            elif 'fire' in desc_lower:
+                required_skills = ['Firefighting', 'Rescue']
+            elif 'police' in desc_lower or 'security' in desc_lower:
+                required_skills = ['Security', 'Self Defense']
+            
+            matches = find_matching_responders(
+                sos, 
+                required_skills=required_skills,
+                limit=3 
+            )
+            
+            if matches:
+                # 2. Assign the best match
+                # In a real system, we might notify multiple and wait for acceptance.
+                # For MVP/Hackathon, we assign the top candidate immediately.
+                best_match = matches[0]
+                responder = ResponderProfile.objects.get(id=best_match['responder_id'])
+                
+                assign_responder(sos, responder)
+                
+                print(f"AUTO-DISPATCH: Assigned Responder {responder.id} to SOS {sos.id} (Score: {best_match['match_score']})")
+            else:
+                print(f"AUTO-DISPATCH: No matching responders found for SOS {sos.id}")
+                
+        except Exception as e:
+            print(f"AUTO-DISPATCH ERROR: {e}")
+        # ----------------------------------
+
         return Response(
             response_serializer.data,
             status=status.HTTP_201_CREATED
