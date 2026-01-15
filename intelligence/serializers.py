@@ -29,11 +29,16 @@ class SOSAnalysisInputSerializer(serializers.Serializer):
         help_text="Emergency description or keywords"
     )
     created_at = serializers.DateTimeField(required=False)
+    use_llm = serializers.BooleanField(
+        default=True,
+        help_text="Whether to use LLM for enhanced analysis"
+    )
 
 
 class SOSAnalysisOutputSerializer(serializers.Serializer):
     """
     Output serializer for SOS analysis results.
+    Includes both rule-based and LLM fields.
     """
     
     # Urgency data
@@ -50,6 +55,27 @@ class SOSAnalysisOutputSerializer(serializers.Serializer):
     # Recommendations
     recommended_skills = serializers.ListField(child=serializers.CharField())
     needs_authority_escalation = serializers.BooleanField()
+    
+    # LLM-enhanced fields (optional)
+    panic_level = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        max_value=10,
+        help_text="Emotional distress level (1-10), from LLM"
+    )
+    emotional_state = serializers.CharField(
+        required=False,
+        help_text="Detected emotional state (calm/anxious/panicked/distressed/fearful)"
+    )
+    llm_reasoning = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="LLM explanation of analysis"
+    )
+    analysis_method = serializers.CharField(
+        default='rule_based',
+        help_text="Method used: 'rule_based', 'llm', or 'hybrid'"
+    )
     
     # Metadata
     analysis_timestamp = serializers.CharField()
